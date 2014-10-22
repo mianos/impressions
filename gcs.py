@@ -1,5 +1,5 @@
 #!/usr/bin/python
-import os, sys
+import os
 import re
 import gzip
 import gevent.monkey
@@ -104,6 +104,7 @@ class Csv:
 
 ssvals = tv.TVD(delimiter='=', eov=';')
 
+
 def DecodeTsv(field, cols, col_data):
     for keyval in ssvals.decode(col_data):
         yield cols + list(keyval)
@@ -185,7 +186,7 @@ if __name__ == '__main__':
     fnames = list()
     fnmap = dict()
     for obj in uri.get_bucket():
-       #  print '%s://%s/%s' % (uri.scheme, uri.bucket_name, obj.name)
+        #  print '%s://%s/%s' % (uri.scheme, uri.bucket_name, obj.name)
         fnames.append(obj.name)
         fnmap[obj.name] = re.match('(.*)_(\d+)_(\d+)_(\d+).gz', obj.name).groups()
     threads = list()
@@ -197,5 +198,5 @@ if __name__ == '__main__':
         ww = gevent.Greenlet(reader, sub.stdout, '_'.join(fnmap[fnames[ii]][fpart] for fpart in xrange(1, 4)))
         threads.append(ww)
         rr.start()
-        ww.start() # _later(1)
+        ww.start()  # _later(1)
     gevent.joinall(threads)
