@@ -16,52 +16,8 @@ import gevent
 import gevent.subprocess
 
 import tv
+from rbc import rbc
 
-
-def rbc(fin, size=100000):
-    DELIMITER = ','
-    QUOTE = '"'
-    STATE_ITEM = 0
-    STATE_STRING = 1
-    STATE_POSSIBLE_EXIT_STRING = 2
-
-    cols = list()
-    state = STATE_ITEM
-    item = ''
-    while True:
-        ndata = fin.read(size)
-        if not ndata:
-            if len(cols):
-                yield cols
-            return
-        # print dcdata
-        for cc in ndata:
-            if state == STATE_ITEM:
-                if cc == DELIMITER:
-                    cols.append(item)
-                    item = ''
-                elif cc == QUOTE:
-                    state = STATE_STRING
-                elif cc == '\n':
-                    cols.append(item)
-                    item = ''
-                    yield cols
-                    cols = list()
-                else:
-                    item += cc
-            elif state == STATE_STRING:
-                if cc == QUOTE:
-                    state = STATE_POSSIBLE_EXIT_STRING
-                else:
-                    item += cc
-            elif state == STATE_POSSIBLE_EXIT_STRING:
-                if cc == '\n' or cc == DELIMITER:
-                    cols.append(item)
-                    item = ''
-                    state = STATE_ITEM
-                else:
-                    item += QUOTE + cc
-                    state = STATE_STRING
 
 
 def writer(fpo, src_uri, bsize=1000000):
@@ -146,7 +102,9 @@ primary_table = 'NetworkClicks'
 
 
 def tname_to_fpo(tname, fname_base):
-    return gzip.open(os.path.join('out', tname + '_' + fname_base + '.csv.gz'), 'w')
+    fname = os.path.join('out', tname + '_' + fname_base + '.csv.gz')
+    sub = gevent.subprocess.Popen(["-c", "gzip | python ofnw.py -o '%s'" % fname], shell=True, stdin=gevent.subprocess.PIPE)
+    return sub.stdin
 
 
 def reader(fpi, fname_base):
@@ -191,6 +149,7 @@ if __name__ == '__main__':
         fnmap[obj.name] = re.match('(.*)_(\d+)_(\d+)_(\d+).gz', obj.name).groups()
     threads = list()
     for ii in xrange(len(fnames)):  # counts so I can go xrange(10)
+        print "started on", ii
         src_uri = boto.storage_uri('ffx/' + fnames[ii], GOOGLE_STORAGE)
         sub = gevent.subprocess.Popen('gunzip', stdin=gevent.subprocess.PIPE, stdout=gevent.subprocess.PIPE)
         rr = gevent.Greenlet(writer, sub.stdin, src_uri)
