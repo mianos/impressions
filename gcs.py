@@ -1,23 +1,23 @@
 #!/usr/bin/python
 import os
 import re
-import gzip
+from optparse import OptionParser
 import gevent.monkey
-# if 'threading' in sys.modules:
-#    raise Exception('threading module loaded before patching!')
+
 gevent.monkey.patch_thread()
 
 import boto
-import gcs_oauth2_boto_plugin
+import gcs_oauth2_boto_plugin  # noqa don't check with flake. This is needed for boto to use oauth
+GOOGLE_STORAGE = 'gs'
 
 gevent.monkey.patch_all()
 
 import gevent
 import gevent.subprocess
+import gevent.pool
 
 import tv
 from rbc import rbc
-
 
 
 def writer(fpo, src_uri, bsize=1000000):
@@ -71,18 +71,18 @@ def DecodePsv(field, cols, col_data):
         yield cols + [val]
 
 sub_field_descriptors = {
-                'CustomTargeting': {
-                    'decoder': DecodeTsv,
-                    'keys': ['KeyPart', 'TimeUsec2'],
-                    'additional_fields': ['LineItemId']},
-                'AudienceSegmentIds': {
-                    'decoder': DecodePsv,
-                    'keys': ['KeyPart', 'TimeUsec2'],
-                    'additional_fields': ['LineItemId']},
-                'TargetedCustomCriteria': {
-                    'decoder': DecodeTsv,
-                    'keys': ['KeyPart', 'TimeUsec2'],
-                    'additional_fields': ['LineItemId']}
+    'CustomTargeting': {
+        'decoder': DecodeTsv,
+        'keys': ['KeyPart', 'TimeUsec2'],
+        'additional_fields': ['LineItemId']},
+    'AudienceSegmentIds': {
+        'decoder': DecodePsv,
+        'keys': ['KeyPart', 'TimeUsec2'],
+        'additional_fields': ['LineItemId']},
+    'TargetedCustomCriteria': {
+        'decoder': DecodeTsv,
+        'keys': ['KeyPart', 'TimeUsec2'],
+        'additional_fields': ['LineItemId']}
 }
 
 
@@ -133,29 +133,38 @@ def reader(fpi, fname_base):
             csvtn.write_csv("NetworkClicks", [vv[ff] for ff in fields_in_primary])
     csvtn.close_all()
 
+
+def process_file(bucket, fname, out_filename):
+    print "started on", fname
+    src_uri = boto.storage_uri(bucket + '/' + fname, GOOGLE_STORAGE)
+    sub = gevent.subprocess.Popen('gunzip', stdin=gevent.subprocess.PIPE, stdout=gevent.subprocess.PIPE)
+    rr = gevent.Greenlet(writer, sub.stdin, src_uri)
+    ww = gevent.Greenlet(reader, sub.stdout, out_filename)
+    rr.start()
+    ww.start()
+    gevent.wait([rr, ww])
+
+
+def c_filenames(bucket):
+    uri = boto.storage_uri(bucket + '/', GOOGLE_STORAGE)
+    fnmap = dict()
+    for obj in uri.get_bucket():
+        fnmap[obj.name] = re.match('(.*)_(\d+)_(\d+)_(\d+).gz', obj.name).groups()
+    return fnmap
+
 if __name__ == '__main__':
     # not needed for a single project specified in .boto
     #    LOCAL_FILE = 'file'
     #    project_id = 'dfp-tests'
     #    uri = boto.storage_uri('', GOOGLE_STORAGE)
     #    header_values = {"x-goog-project-id": project_id}
-    GOOGLE_STORAGE = 'gs'
-    uri = boto.storage_uri('ffx/', GOOGLE_STORAGE)
-    fnames = list()
-    fnmap = dict()
-    for obj in uri.get_bucket():
-        #  print '%s://%s/%s' % (uri.scheme, uri.bucket_name, obj.name)
-        fnames.append(obj.name)
-        fnmap[obj.name] = re.match('(.*)_(\d+)_(\d+)_(\d+).gz', obj.name).groups()
-    threads = list()
-    for ii in xrange(len(fnames)):  # counts so I can go xrange(10)
-        print "started on", ii
-        src_uri = boto.storage_uri('ffx/' + fnames[ii], GOOGLE_STORAGE)
-        sub = gevent.subprocess.Popen('gunzip', stdin=gevent.subprocess.PIPE, stdout=gevent.subprocess.PIPE)
-        rr = gevent.Greenlet(writer, sub.stdin, src_uri)
-        threads.append(rr)
-        ww = gevent.Greenlet(reader, sub.stdout, '_'.join(fnmap[fnames[ii]][fpart] for fpart in xrange(1, 4)))
-        threads.append(ww)
-        rr.start()
-        ww.start()  # _later(1)
-    gevent.joinall(threads)
+    parser = OptionParser()
+    parser.add_option("-t", "--threads", dest="threads", default=5)
+    parser.add_option("-b", "--bucket", dest="bucket", default='ffx')
+    options, args = parser.parse_args()
+
+    fnmap = c_filenames(options.bucket)
+    pool = gevent.pool.Pool(options.threads)
+    for fname, fpart in fnmap.iteritems():
+        pool.spawn(process_file, options.bucket, fname, '_'.join(fpart[ii] for ii in xrange(1, 4)))
+    gevent.wait()
