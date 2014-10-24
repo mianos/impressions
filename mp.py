@@ -43,13 +43,11 @@ class S3MP():
         self.oblock += block
         while len(self.oblock) >= self.minblock:
             self.pool.spawn(self.sendr, self.mp, self.part, StringIO(self.oblock[:self.minblock]))
-            # self.mp.upload_part_from_file(StringIO(self.oblock[:self.minblock]), self.part)
             self.oblock = self.oblock[self.minblock:]
             self.part += 1
 
     def flush(self):
         self.pool.join()
-        # self.mp.upload_part_from_file(StringIO(self.oblock), self.part)
         self.sendr(self.mp, self.part, StringIO(self.oblock))
         for part in self.mp:
             print part.part_number, part.size
